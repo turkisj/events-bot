@@ -94,6 +94,23 @@ def update_seats(event_id, role):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
+    
+    # إذا كان في قروب
+    if update.effective_chat.type in ["group", "supergroup"]:
+        keyboard = [[InlineKeyboardButton(
+            "🎟 احجز الآن في المحادثة الخاصة",
+            url=f"https://t.me/Dizevents_bot?start=book"
+        )]]
+        await update.message.reply_text(
+            "👋 أهلاً بك في *Diz Events*!\n\n"
+            "🎟 منصة الفعاليات مع خدمة النقل الذكي 🚗🏟\n\n"
+            "اضغط الزر أدناه للحجز في المحادثة الخاصة:",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+    
+    # في المحادثة الخاصة
     keyboard = [
         [InlineKeyboardButton("🎟 الفعاليات المتاحة", callback_data="events")],
         [InlineKeyboardButton("📋 حجوزاتي", callback_data="mybookings")],
