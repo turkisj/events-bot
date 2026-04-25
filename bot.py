@@ -113,7 +113,15 @@ async def start_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("👩 إناث", callback_data="gender_female")],
         [InlineKeyboardButton("🔙 رجوع", callback_data="back")],
     ]
-    await query.edit_message_text("👤 اختر الجنس:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text(
+    "📌 *ملاحظة مهمة:*\n"
+    "جميع الرحلات تشمل:\n"
+    "✅ ذهاب وعودة\n"
+    "✅ التذاكر مشمولة في السعر\n\n"
+    "👤 اختر الجنس:",
+    parse_mode="Markdown",
+    reply_markup=InlineKeyboardMarkup(keyboard)
+)
     return CHOOSING_GENDER
 
 async def choose_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
