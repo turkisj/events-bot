@@ -316,7 +316,7 @@ async def enter_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg, parse_mode="Markdown")
 
         # إشعار الأدمن
-        admin_id = os.environ.get("ADMIN_ID")
+        admin_id = int(os.environ.get("ADMIN_ID"))
         booked_count = int(current_event.get("booked", 0)) + (0 if role == "driver" else 1)
         driver_count = int(current_event.get("driver_booked", 0)) + (1 if role == "driver" else 0)
         total = int(current_event.get("total_seats", 0))
