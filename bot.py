@@ -322,16 +322,16 @@ async def enter_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total = int(current_event.get("total_seats", 0))
 
         admin_msg = (
-            f"🔔 *حجز جديد!*\n\n"
+            f"🔔 حجز جديد!\n\n"
             f"🎟 {event['title']}\n"
             f"📅 {event['date']}\n"
-            f"👤 {'🚗 سائق' if role == 'driver' else '🧍 راكب'} — @{user.username or user.first_name}\n"
+            f"👤 {'🚗 سائق' if role == 'driver' else '🧍 راكب'} — {user.username or user.first_name}\n"
             f"🏙 الانطلاق من: {context.user_data['from_city']}\n"
             f"📱 {phone}\n"
             f"⚽ النادي المفضل: {team_pref or 'غير محدد'}\n\n"
             f"📊 المقاعد: {booked_count}/{total} | سائق: {'✅' if driver_count >= 1 else '❌'}"
         )
-        await context.bot.send_message(chat_id=admin_id, text=admin_msg, parse_mode="Markdown")
+        await context.bot.send_message(chat_id=admin_id, text=admin_msg)
 
         if booked_count >= total and driver_count >= 1:
             complete_msg = (
