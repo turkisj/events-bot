@@ -186,21 +186,83 @@ async def enter_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     role = context.user_data["role"]
     event_id = context.user_data["event_id"]
 
-    # فحص المقاعد المتبقية قبل الحجز
     try:
         sheet = get_sheet()
         ws = sheet.worksheet("events")
         records = ws.get_all_records()
         current_event = next((r for r in records if str(r["id"]) == str(event_id)), None)
-        
+
         if not current_event:
             await update.message.reply_text("❌ الفعالية غير موجودة")
             return ConversationHandler.END
-        
+
         if role == "driver":
             if int(current_event.get("driver_booked", 0)) >= 1:
                 await update.message.reply_text("❌ تم حجز مقعد السائق مسبقاً")
                 return ConversationHandler.END
+        else:
+            booked = int(current_event.get("booked", 0))
+            total = int(current_event.get("total_seats", 0))
+            if booked >= total:
+                await update.message.reply_text("❌ عذراً، المقاعد امتلأت")
+                return ConversationHandler.END
+
+        booking_data = {
+            "event_id": event_id,
+            "username": user.username or user.first_name,
+            "chat_id": user.id,
+            "role": role,
+            "from_city": context.user_data["from_city"],
+            "phone": phone,
+        }
+
+        add_booking(booking_data)
+        update_seats(event_id, role)
+
+        role_text = "🚗 سائق (تذكرة مجانية)" if role == "driver" else "🧍 راكب"
+        msg = (
+            f"✅ *تم الحجز بنجاح!*\n\n"
+            f"🎟 {event['title']}\n"
+            f"📅 {event['date']}\n"
+            f"📍 {event['venue']}\n"
+            f"👤 {role_text}\n"
+            f"🏙 الانطلاق من: {context.user_data['from_city']}\n\n"
+            f"سيتم التواصل معك قريباً بتفاصيل الرحلة ✨"
+        )
+        await update.message.reply_text(msg, parse_mode="Markdown")
+
+        # إشعار الأدمن
+        admin_id = os.environ.get("ADMIN_ID")
+        booked_count = int(current_event.get("booked", 0)) + (0 if role == "driver" else 1)
+        driver_count = int(current_event.get("driver_booked", 0)) + (1 if role == "driver" else 0)
+        total = int(current_event.get("total_seats", 0))
+
+        admin_msg = (
+            f"🔔 *حجز جديد!*\n\n"
+            f"🎟 {event['title']}\n"
+            f"📅 {event['date']}\n"
+            f"👤 {'🚗 سائق' if role == 'driver' else '🧍 راكب'} — @{user.username or user.first_name}\n"
+            f"🏙 الانطلاق من: {context.user_data['from_city']}\n"
+            f"📱 {phone}\n\n"
+            f"📊 المقاعد: {booked_count}/{total} ركاب | سائق: {'✅' if driver_count >= 1 else '❌'}"
+        )
+        await context.bot.send_message(chat_id=admin_id, text=admin_msg, parse_mode="Markdown")
+
+        # إشعار اكتمال السيارة
+        if booked_count >= total and driver_count >= 1:
+            complete_msg = (
+                f"✅ *اكتملت السيارة!*\n\n"
+                f"🎟 {event['title']}\n"
+                f"📅 {event['date']}\n"
+                f"👥 السائق + {total} ركاب جاهزين 🎉"
+            )
+            await context.bot.send_message(chat_id=admin_id, text=complete_msg, parse_mode="Markdown")
+
+    except Exception as e:
+        logger.error(f"Booking error: {e}")
+        await update.message.reply_text("❌ حدث خطأ، حاول مرة أخرى")
+
+    return ConversationHandler.END
         else:
             booked = int(current_event.get("booked", 0))
             total = int(current_event.get("total_seats", 0))
