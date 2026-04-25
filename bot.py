@@ -13,24 +13,36 @@ from datetime import datetime
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# States
-CHOOSING_EVENT, CHOOSING_ROLE, ENTERING_CITY, ENTERING_PHONE = range(4)
+CHOOSING_GENDER, CHOOSING_CITY, CHOOSING_TYPE, CHOOSING_EVENT, CHOOSING_ROLE, ENTERING_CITY, ENTERING_PHONE = range(7)
 
 SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+
+CITIES = ["الرياض", "جدة", "المدينة المنورة", "مكة المكرمة", "الدمام", "أبها", "تبوك", "ينبع"]
+EVENT_TYPES = {"football": "⚽ كرة قدم", "concert": "🎤 حفلات غنائية", "all": "🎯 الكل"}
 
 def get_sheet():
     creds_json = os.environ.get("GOOGLE_CREDENTIALS")
     creds_dict = json.loads(creds_json)
     creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     client = gspread.authorize(creds)
-    sheet = client.open("Events Data")
-    return sheet
+    return client.open("Events Data")
 
-def get_events():
+def get_events(gender=None, event_city=None, event_type=None):
     sheet = get_sheet()
     ws = sheet.worksheet("events")
     records = ws.get_all_records()
-    return [r for r in records if str(r.get("status", "")).strip().lower() == "open"]
+    results = []
+    for r in records:
+        if str(r.get("status", "")).strip().lower() != "open":
+            continue
+        if gender and r.get("gender") not in [gender, "both"]:
+            continue
+        if event_city and r.get("event_city") != event_city:
+            continue
+        if event_type and event_type != "all" and r.get("type") != event_type:
+            continue
+        results.append(r)
+    return results
 
 def add_booking(data: dict):
     sheet = get_sheet()
@@ -58,16 +70,17 @@ def update_seats(event_id, role):
             row_num = i + 2
             if role == "driver":
                 current = int(row.get("driver_booked", 0))
-                ws.update_cell(row_num, 10, current + 1)
+                ws.update_cell(row_num, 11, current + 1)
             else:
                 current = int(row.get("booked", 0))
                 ws.update_cell(row_num, 9, current + 1)
                 total = int(row.get("total_seats", 0))
                 if current + 1 >= total:
-                    ws.update_cell(row_num, 11, "full")
+                    ws.update_cell(row_num, 12, "full")
             break
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
     keyboard = [
         [InlineKeyboardButton("🎟 الفعاليات المتاحة", callback_data="events")],
         [InlineKeyboardButton("📋 حجوزاتي", callback_data="mybookings")],
@@ -78,99 +91,123 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-async def show_events(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if query:
-        await query.answer()
-    
+    await query.answer()
+    context.user_data.clear()
+
+    keyboard = [
+        [InlineKeyboardButton("👨 ذكور", callback_data="gender_male")],
+        [InlineKeyboardButton("👩 إناث", callback_data="gender_female")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data="back")],
+    ]
+    await query.edit_message_text("👤 اختر الجنس:", reply_markup=InlineKeyboardMarkup(keyboard))
+    return CHOOSING_GENDER
+
+async def choose_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data["gender"] = query.data.replace("gender_", "")
+
+    keyboard = [[InlineKeyboardButton(city, callback_data=f"city_{city}")] for city in CITIES]
+    keyboard.append([InlineKeyboardButton("🌍 كل المدن", callback_data="city_all")])
+    keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data="events")])
+
+    await query.edit_message_text("📍 اختر مدينة الفعالية:", reply_markup=InlineKeyboardMarkup(keyboard))
+    return CHOOSING_CITY
+
+async def choose_city_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    city = query.data.replace("city_", "")
+    context.user_data["event_city"] = None if city == "all" else city
+
+    keyboard = [
+        [InlineKeyboardButton("⚽ كرة قدم", callback_data="type_football")],
+        [InlineKeyboardButton("🎤 حفلات غنائية", callback_data="type_concert")],
+        [InlineKeyboardButton("🎯 الكل", callback_data="type_all")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data="events")],
+    ]
+    await query.edit_message_text("🎭 اختر نوع الفعالية:", reply_markup=InlineKeyboardMarkup(keyboard))
+    return CHOOSING_TYPE
+
+async def choose_type_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data["event_type"] = query.data.replace("type_", "")
+
+    return await show_filtered_events(update, context)
+
+async def show_filtered_events(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+
     try:
-        events = get_events()
+        events = get_events(
+            gender=context.user_data.get("gender"),
+            event_city=context.user_data.get("event_city"),
+            event_type=context.user_data.get("event_type")
+        )
     except Exception as e:
         logger.error(f"Sheet error: {e}")
-        text = f"❌ خطأ في الاتصال بالبيانات:\n{str(e)}"
-        if query:
-            await query.edit_message_text(text)
-        else:
-            await update.message.reply_text(text)
+        await query.edit_message_text(f"❌ خطأ في الاتصال بالبيانات:\n{str(e)}")
         return ConversationHandler.END
 
     if not events:
-        text = "❌ لا توجد فعاليات متاحة حالياً"
-        if query:
-            await query.edit_message_text(text)
-        else:
-            await update.message.reply_text(text)
+        keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="events")]]
+        await query.edit_message_text("❌ لا توجد فعاليات متاحة بهذه المعايير", reply_markup=InlineKeyboardMarkup(keyboard))
         return ConversationHandler.END
 
     keyboard = []
     for e in events:
         remaining = int(e.get("total_seats", 0)) - int(e.get("booked", 0))
-        label = f"{e['title']} | {e['date']} | {e['price']} ريال | {remaining} مقاعد"
+        type_label = EVENT_TYPES.get(e.get("type", ""), "🎟")
+        label = f"{type_label} {e['title']} | {e['event_city']} | {e['price']} ريال | {remaining} مقاعد"
         keyboard.append([InlineKeyboardButton(label, callback_data=f"event_{e['id']}")])
-    
-    keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data="back")])
-    
-    if query:
-        await query.edit_message_text("🎟 اختر الفعالية:", reply_markup=InlineKeyboardMarkup(keyboard))
-    else:
-        await update.message.reply_text("🎟 اختر الفعالية:", reply_markup=InlineKeyboardMarkup(keyboard))
-    
-    return CHOOSING_EVENT
 
-    keyboard = []
-    for e in events:
-        remaining = int(e.get("total_seats", 0)) - int(e.get("booked", 0))
-        label = f"{e['title']} | {e['date']} | {e['price']} ريال | {remaining} مقاعد"
-        keyboard.append([InlineKeyboardButton(label, callback_data=f"event_{e['id']}")])
-    
-    keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data="back")])
-    
-    if query:
-        await query.edit_message_text("🎟 اختر الفعالية:", reply_markup=InlineKeyboardMarkup(keyboard))
-    else:
-        await update.message.reply_text("🎟 اختر الفعالية:", reply_markup=InlineKeyboardMarkup(keyboard))
-    
+    keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data="events")])
+    await query.edit_message_text("🎟 اختر الفعالية:", reply_markup=InlineKeyboardMarkup(keyboard))
     return CHOOSING_EVENT
 
 async def choose_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
+
     event_id = query.data.replace("event_", "")
     context.user_data["event_id"] = event_id
-    
-    events = get_events()
-    event = next((e for e in events if str(e["id"]) == event_id), None)
-    if not event:
-        await query.edit_message_text("❌ الفعالية غير متاحة")
+
+    try:
+        events = get_events()
+        event = next((e for e in events if str(e["id"]) == event_id), None)
+        if not event:
+            await query.edit_message_text("❌ الفعالية غير متاحة")
+            return ConversationHandler.END
+    except Exception as e:
+        await query.edit_message_text(f"❌ خطأ: {str(e)}")
         return ConversationHandler.END
-    
+
     context.user_data["event"] = event
-    
+    type_label = EVENT_TYPES.get(event.get("type", ""), "🎟")
+
     info = (
-        f"🎟 *{event['title']}*\n"
+        f"{type_label} *{event['title']}*\n"
         f"📅 {event['date']}\n"
-        f"📍 {event['venue']} — {event['city']}\n"
+        f"📍 {event['venue']} — {event['event_city']}\n"
         f"💰 {event['price']} ريال للراكب\n"
         f"🚗 السائق: تذكرة مجانية!"
     )
-    
+
     keyboard = [
         [InlineKeyboardButton("🧍 راكب", callback_data="role_passenger")],
         [InlineKeyboardButton("🚗 سائق (تذكرة مجانية)", callback_data="role_driver")],
         [InlineKeyboardButton("🔙 رجوع", callback_data="events")],
     ]
-    
     await query.edit_message_text(info, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
     return CHOOSING_ROLE
 
 async def choose_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
-    role = query.data.replace("role_", "")
-    context.user_data["role"] = role
-    
+    context.user_data["role"] = query.data.replace("role_", "")
     await query.edit_message_text("📍 من أي مدينة ستنطلق؟\n\nاكتب اسم المدينة:")
     return ENTERING_CITY
 
@@ -244,11 +281,10 @@ async def enter_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👤 {'🚗 سائق' if role == 'driver' else '🧍 راكب'} — @{user.username or user.first_name}\n"
             f"🏙 الانطلاق من: {context.user_data['from_city']}\n"
             f"📱 {phone}\n\n"
-            f"📊 المقاعد: {booked_count}/{total} ركاب | سائق: {'✅' if driver_count >= 1 else '❌'}"
+            f"📊 المقاعد: {booked_count}/{total} | سائق: {'✅' if driver_count >= 1 else '❌'}"
         )
         await context.bot.send_message(chat_id=admin_id, text=admin_msg, parse_mode="Markdown")
 
-        # إشعار اكتمال السيارة
         if booked_count >= total and driver_count >= 1:
             complete_msg = (
                 f"✅ *اكتملت السيارة!*\n\n"
@@ -263,72 +299,24 @@ async def enter_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ حدث خطأ، حاول مرة أخرى")
 
     return ConversationHandler.END
-        else:
-            booked = int(current_event.get("booked", 0))
-            total = int(current_event.get("total_seats", 0))
-            if booked >= total:
-                await update.message.reply_text("❌ عذراً، المقاعد امتلأت")
-                return ConversationHandler.END
 
-        booking_data = {
-            "event_id": event_id,
-            "username": user.username or user.first_name,
-            "chat_id": user.id,
-            "role": role,
-            "from_city": context.user_data["from_city"],
-            "phone": phone,
-        }
+async def my_bookings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
 
-        add_booking(booking_data)
-        update_seats(event_id, role)
-
-        role_text = "🚗 سائق (تذكرة مجانية)" if role == "driver" else "🧍 راكب"
-        msg = (
-            f"✅ *تم الحجز بنجاح!*\n\n"
-            f"🎟 {event['title']}\n"
-            f"📅 {event['date']}\n"
-            f"📍 {event['venue']}\n"
-            f"👤 {role_text}\n"
-            f"🏙 الانطلاق من: {context.user_data['from_city']}\n\n"
-            f"سيتم التواصل معك قريباً بتفاصيل الرحلة ✨"
-        )
-        await update.message.reply_text(msg, parse_mode="Markdown")
-
-    # إشعار الأدمن
-        admin_id = os.environ.get("ADMIN_ID")
-        booked_count = int(current_event.get("booked", 0)) + (0 if role == "driver" else 1)
-        driver_count = int(current_event.get("driver_booked", 0)) + (1 if role == "driver" else 0)
-        total = int(current_event.get("total_seats", 0))
-        
-        admin_msg = (
-            f"🔔 *حجز جديد!*\n\n"
-            f"🎟 {event['title']}\n"
-            f"📅 {event['date']}\n"
-            f"👤 {'🚗 سائق' if role == 'driver' else '🧍 راكب'} — @{user.username or user.first_name}\n"
-            f"🏙 الانطلاق من: {context.user_data['from_city']}\n"
-            f"📱 {phone}\n\n"
-            f"📊 المقاعد: {booked_count}/{total} ركاب | سائق: {'✅' if driver_count >= 1 else '❌'}"
-        )
-        
-        await context.bot.send_message(chat_id=admin_id, text=admin_msg, parse_mode="Markdown")
-        
-        # إشعار اكتمال السيارة
-        if booked_count >= total and driver_count >= 1:
-            complete_msg = (
-                f"✅ *اكتملت السيارة!*\n\n"
-                f"🎟 {event['title']}\n"
-                f"📅 {event['date']}\n"
-                f"👥 السائق + {total} ركاب جاهزين 🎉"
-            )
-            await context.bot.send_message(chat_id=admin_id, text=complete_msg, parse_mode="Markdown")
-    
     user = update.effective_user
-    sheet = get_sheet()
-    ws = sheet.worksheet("bookings")
-    records = ws.get_all_records()
-    
-    user_bookings = [r for r in records if str(r.get("chat_id")) == str(user.id)]
-    
+    try:
+        sheet = get_sheet()
+        ws = sheet.worksheet("bookings")
+        records = ws.get_all_records()
+        user_bookings = [r for r in records if str(r.get("chat_id")) == str(user.id)]
+    except Exception as e:
+        text = f"❌ خطأ: {str(e)}"
+        if query:
+            await query.edit_message_text(text)
+        return
+
     if not user_bookings:
         text = "📋 ليس لديك حجوزات حالياً"
     else:
@@ -336,16 +324,15 @@ async def enter_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for b in user_bookings[-5:]:
             lines.append(f"• {b.get('event_id')} | {b.get('role')} | {b.get('status')}")
         text = "\n".join(lines)
-    
+
+    keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="back")]]
     if query:
-        keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="back")]]
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-    else:
-        await update.message.reply_text(text, parse_mode="Markdown")
 
 async def back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    context.user_data.clear()
     keyboard = [
         [InlineKeyboardButton("🎟 الفعاليات المتاحة", callback_data="events")],
         [InlineKeyboardButton("📋 حجوزاتي", callback_data="mybookings")],
@@ -363,23 +350,29 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     token = os.environ.get("EVENTS_BOT_TOKEN")
     app = Application.builder().token(token).build()
-    
+
     conv_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(show_events, pattern="^events$")],
+        entry_points=[CallbackQueryHandler(start_filter, pattern="^events$")],
         states={
+            CHOOSING_GENDER: [CallbackQueryHandler(choose_gender, pattern="^gender_")],
+            CHOOSING_CITY: [CallbackQueryHandler(choose_city_filter, pattern="^city_")],
+            CHOOSING_TYPE: [CallbackQueryHandler(choose_type_filter, pattern="^type_")],
             CHOOSING_EVENT: [CallbackQueryHandler(choose_event, pattern="^event_")],
             CHOOSING_ROLE: [CallbackQueryHandler(choose_role, pattern="^role_")],
             ENTERING_CITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_city)],
             ENTERING_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_phone)],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            CallbackQueryHandler(back, pattern="^back$"),
+        ],
     )
-    
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(my_bookings, pattern="^mybookings$"))
     app.add_handler(CallbackQueryHandler(back, pattern="^back$"))
-    
+
     logger.info("Bot started...")
     app.run_polling()
 
