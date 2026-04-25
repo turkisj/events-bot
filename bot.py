@@ -232,16 +232,33 @@ async def enter_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(msg, parse_mode="Markdown")
 
-    except Exception as e:
-        logger.error(f"Booking error: {e}")
-        await update.message.reply_text("❌ حدث خطأ، حاول مرة أخرى")
-
-    return ConversationHandler.END
-
-async def my_bookings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if query:
-        await query.answer()
+    # إشعار الأدمن
+        admin_id = os.environ.get("ADMIN_ID")
+        booked_count = int(current_event.get("booked", 0)) + (0 if role == "driver" else 1)
+        driver_count = int(current_event.get("driver_booked", 0)) + (1 if role == "driver" else 0)
+        total = int(current_event.get("total_seats", 0))
+        
+        admin_msg = (
+            f"🔔 *حجز جديد!*\n\n"
+            f"🎟 {event['title']}\n"
+            f"📅 {event['date']}\n"
+            f"👤 {'🚗 سائق' if role == 'driver' else '🧍 راكب'} — @{user.username or user.first_name}\n"
+            f"🏙 الانطلاق من: {context.user_data['from_city']}\n"
+            f"📱 {phone}\n\n"
+            f"📊 المقاعد: {booked_count}/{total} ركاب | سائق: {'✅' if driver_count >= 1 else '❌'}"
+        )
+        
+        await context.bot.send_message(chat_id=admin_id, text=admin_msg, parse_mode="Markdown")
+        
+        # إشعار اكتمال السيارة
+        if booked_count >= total and driver_count >= 1:
+            complete_msg = (
+                f"✅ *اكتملت السيارة!*\n\n"
+                f"🎟 {event['title']}\n"
+                f"📅 {event['date']}\n"
+                f"👥 السائق + {total} ركاب جاهزين 🎉"
+            )
+            await context.bot.send_message(chat_id=admin_id, text=complete_msg, parse_mode="Markdown")
     
     user = update.effective_user
     sheet = get_sheet()
