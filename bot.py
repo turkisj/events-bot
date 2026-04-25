@@ -261,6 +261,17 @@ async def enter_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def enter_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone = update.message.text.strip()
+    
+    # التحقق من صحة رقم الجوال
+    if not phone.startswith("05") or not phone.isdigit() or len(phone) != 10:
+        await update.message.reply_text(
+            "❌ رقم الجوال غير صحيح\n\n"
+            "تأكد أن الرقم:\n"
+            "• يبدأ بـ 05\n"
+            "• مكون من 10 أرقام\n\n"
+            "أعد إدخال رقم الجوال:"
+        )
+        return ENTERING_PHONE
     user = update.effective_user
     event = context.user_data["event"]
     role = context.user_data["role"]
