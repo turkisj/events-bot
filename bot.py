@@ -13,7 +13,7 @@ from datetime import datetime
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-CHOOSING_GENDER, CHOOSING_CITY, CHOOSING_TYPE, CHOOSING_TEAM, CHOOSING_EVENT, CHOOSING_ROLE, ENTERING_CITY, ENTERING_PHONE = range(8)
+CHOOSING_GENDER, CHOOSING_CITY, CHOOSING_TYPE, CHOOSING_TEAM, CHOOSING_EVENT, CHOOSING_ROLE, ENTERING_CITY, ENTERING_PHONE, CONFIRMING_PHONE = range(9)
 
 SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 
@@ -114,14 +114,14 @@ async def start_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔙 رجوع", callback_data="back")],
     ]
     await query.edit_message_text(
-    "📌 *ملاحظة مهمة:*\n"
-    "جميع الرحلات تشمل:\n"
-    "✅ ذهاب وعودة\n"
-    "✅ التذاكر مشمولة في السعر\n\n"
-    "👤 اختر الجنس:",
-    parse_mode="Markdown",
-    reply_markup=InlineKeyboardMarkup(keyboard)
-)
+        "📌 *ملاحظة مهمة:*\n"
+        "جميع الرحلات تشمل:\n"
+        "✅ ذهاب وعودة\n"
+        "✅ التذاكر مشمولة في السعر\n\n"
+        "👤 اختر الجنس:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
     return CHOOSING_GENDER
 
 async def choose_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -261,8 +261,7 @@ async def enter_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def enter_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone = update.message.text.strip()
-    
-    # التحقق من صحة رقم الجوال
+
     if not phone.startswith("05") or not phone.isdigit() or len(phone) != 10:
         await update.message.reply_text(
             "❌ رقم الجوال غير صحيح\n\n"
@@ -272,6 +271,29 @@ async def enter_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "أعد إدخال رقم الجوال:"
         )
         return ENTERING_PHONE
+
+    context.user_data["phone_first"] = phone
+    await update.message.reply_text("📱 أعد إدخال رقم الجوال للتأكيد:")
+    return CONFIRMING_PHONE
+
+async def confirm_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    phone = update.message.text.strip()
+
+    if not phone.startswith("05") or not phone.isdigit() or len(phone) != 10:
+        await update.message.reply_text(
+            "❌ رقم الجوال غير صحيح\n\n"
+            "أعد إدخال رقم الجوال للتأكيد:"
+        )
+        return CONFIRMING_PHONE
+
+    if phone != context.user_data.get("phone_first"):
+        await update.message.reply_text(
+            "❌ الرقمان غير متطابقان\n\n"
+            "أعد إدخال رقم الجوال من البداية:"
+        )
+        context.user_data.pop("phone_first", None)
+        return ENTERING_PHONE
+
     user = update.effective_user
     event = context.user_data["event"]
     role = context.user_data["role"]
@@ -326,7 +348,6 @@ async def enter_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(msg, parse_mode="Markdown")
 
-        # إشعار الأدمن
         admin_id = int(os.environ.get("ADMIN_ID"))
         booked_count = int(current_event.get("booked", 0)) + (0 if role == "driver" else 1)
         driver_count = int(current_event.get("driver_booked", 0)) + (1 if role == "driver" else 0)
@@ -346,12 +367,12 @@ async def enter_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if booked_count >= total and driver_count >= 1:
             complete_msg = (
-                f"✅ *اكتملت السيارة!*\n\n"
+                f"✅ اكتملت السيارة!\n\n"
                 f"🎟 {event['title']}\n"
                 f"📅 {event['date']}\n"
                 f"👥 السائق + {total} ركاب جاهزين 🎉"
             )
-            await context.bot.send_message(chat_id=admin_id, text=complete_msg, parse_mode="Markdown")
+            await context.bot.send_message(chat_id=admin_id, text=complete_msg)
 
     except Exception as e:
         logger.error(f"Booking error: {e}")
@@ -419,6 +440,7 @@ def main():
             CHOOSING_ROLE: [CallbackQueryHandler(choose_role, pattern="^role_")],
             ENTERING_CITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_city)],
             ENTERING_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_phone)],
+            CONFIRMING_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_phone)],
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
