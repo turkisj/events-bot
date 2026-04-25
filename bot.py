@@ -83,7 +83,17 @@ async def show_events(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query:
         await query.answer()
     
-    events = get_events()
+    try:
+        events = get_events()
+    except Exception as e:
+        logger.error(f"Sheet error: {e}")
+        text = f"❌ خطأ في الاتصال بالبيانات:\n{str(e)}"
+        if query:
+            await query.edit_message_text(text)
+        else:
+            await update.message.reply_text(text)
+        return ConversationHandler.END
+
     if not events:
         text = "❌ لا توجد فعاليات متاحة حالياً"
         if query:
@@ -91,6 +101,21 @@ async def show_events(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text(text)
         return ConversationHandler.END
+
+    keyboard = []
+    for e in events:
+        remaining = int(e.get("total_seats", 0)) - int(e.get("booked", 0))
+        label = f"{e['title']} | {e['date']} | {e['price']} ريال | {remaining} مقاعد"
+        keyboard.append([InlineKeyboardButton(label, callback_data=f"event_{e['id']}")])
+    
+    keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data="back")])
+    
+    if query:
+        await query.edit_message_text("🎟 اختر الفعالية:", reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await update.message.reply_text("🎟 اختر الفعالية:", reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    return CHOOSING_EVENT
 
     keyboard = []
     for e in events:
